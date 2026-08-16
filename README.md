@@ -1,4 +1,12 @@
+## Project credit
+
+Kenwood USB MSC compatibility work for Rockbox was developed, tested, and documented by SeraphMakes in August 2026.
+
+This project is based on the upstream Rockbox project. Credit for Rockbox itself belongs to the Rockbox contributors. This repository documents the Kenwood-specific compatibility work and experimental implementation developed for this project.
+
 # Rockbox -> Kenwood USB MSC Compatibility
+
+
 ## v0.1 Experimental
 
 This is an experimental Rockbox build that has been successfully tested
