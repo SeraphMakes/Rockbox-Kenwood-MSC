@@ -1,0 +1,2112 @@
+tag kenwood-msc-known-good-2026-08-16
+Tagger:     Anon <Anon@local>
+TaggerDate: Sun Aug 16 09:50:13 2026 -0400
+
+Known-good Rockbox iPod Video 5.5G MSC build for Kenwood DMX958XR
+
+commit 62d0e4ca8af641f0912a5297bd60fc2ac2e43027
+Author:     Anon <Anon@local>
+AuthorDate: Sun Aug 16 09:50:13 2026 -0400
+Commit:     Anon <Anon@local>
+CommitDate: Sun Aug 16 09:50:13 2026 -0400
+
+    Kenwood DMX958XR reliable MSC breakthrough
+
+diff --git a/apps/debug_menu.c b/apps/debug_menu.c
+index e61a3322dc..91b3394c9b 100644
+--- a/apps/debug_menu.c
++++ b/apps/debug_menu.c
+@@ -117,6 +117,7 @@
+ #ifdef HAVE_USBSTACK
+ #include "usb_core.h"
+ #include "usb_drv.h"
++#include "../firmware/usbstack/usb_storage.h"
+ #ifdef USB_ENABLE_AUDIO
+ #include "../usbstack/usb_audio.h"
+ #endif
+@@ -2540,6 +2541,191 @@ static bool toggle_usb_serial(void)
+ #endif /* USB_ENABLE_SERIAL */
+ #endif
+ 
++#ifdef USB_ENABLE_STORAGE
++static int dbg_usb_msc_cb(int action, struct gui_synclist *lists)
++{
++    (void)lists;
++
++    const struct usb_storage_debug_state *s =
++        usb_storage_get_debug_state();
++    const struct usb_core_debug_state *u =
++        usb_core_get_debug_state();
++
++    simplelist_reset_lines();
++
++    simplelist_addline("R10:%u W10:%u",
++                       s->read_10_count,
++                       s->write_10_count);
++
++    simplelist_addline("TUR:%u G:%u X:%u L:%u",
++                       s->test_unit_ready_count,
++                       s->test_unit_ready_good_count,
++                       s->test_unit_ready_exclusive_fail_count,
++                       s->test_unit_ready_lun_fail_count);
++
++    simplelist_addline("ERR:%u RERR:%u XERR:%u",
++                       s->error_count,
++                       s->storage_read_error_count,
++                       s->transfer_error_count);
++
++    simplelist_addline("RLBA:%u RN:%u",
++                       s->last_read_lba,
++                       s->last_read_blocks);
++
++    simplelist_addline("TRACE:%u ACTIVE:%u",
++                       s->scsi_trace_count,
++                       s->scsi_trace_active);
++
++    simplelist_addline("WD:%u TAG:%08X LEN:%u",
++                       s->write_diag_active,
++                       s->write_diag_cbw_tag,
++                       s->write_diag_cbw_length);
++
++    simplelist_addline("RX:%u ST:%d RACE:%u",
++                       s->write_diag_rx_length,
++                       s->write_diag_rx_status,
++                       s->write_diag_race);
++
++    simplelist_addline("CSW:%08X S:%u R:%u",
++                       s->write_diag_csw_tag,
++                       s->write_diag_csw_status,
++                       s->write_diag_csw_residue);
++
++    simplelist_addline("NEXT:%02X TAG:%08X P:%u",
++                       s->write_diag_next_opcode,
++                       s->write_diag_next_tag,
++                       s->write_diag_next_path);
++
++    simplelist_addline("TM:%02X",
++                       s->timing_mask);
++
++    simplelist_addline("R D:%u I:%u C:%u",
++                       s->timing_r236_data_done,
++                       s->timing_r236_csw_issue,
++                       s->timing_r236_csw_done);
++
++    simplelist_addline("W C:%u D:%u I:%u",
++                       s->timing_write_cbw,
++                       s->timing_write_data_done,
++                       s->timing_write_csw_issue);
++
++    simplelist_addline("W C:%u N:%u/%02X",
++                       s->timing_write_csw_done,
++                       s->timing_next_cbw,
++                       s->timing_next_opcode);
++
++    /*
++     * Combined Kenwood diagnostic.
++     *
++     * Keeps the existing SCSI timing information while also exposing
++     * USB reset/configuration, endpoint, control-request, and MSC state.
++     */
++    simplelist_addline("PACE:%u US:%u",
++                       s->kenwood_pace_count,
++                       s->kenwood_pace_delay_us);
++
++    simplelist_addline("MF:%u>%u>%u",
++                       s->kenwood_frindex_before & 7,
++                       s->kenwood_frindex_after_delay & 7,
++                       s->kenwood_frindex_after_csw & 7);
++
++    simplelist_addline("FI:%u>%u>%u",
++                       s->kenwood_frindex_before,
++                       s->kenwood_frindex_after_delay,
++                       s->kenwood_frindex_after_csw);
++
++    simplelist_addline("UC:%u BR:%u CFG:%u/%u",
++                       u->control_count,
++                       u->bus_reset_count,
++                       u->set_configuration_count,
++                       u->config_apply_count);
++
++    simplelist_addline("IF:%u EP:%u/%u H:%u/%u",
++                       u->set_interface_count,
++                       u->endpoint_init_count,
++                       u->endpoint_deinit_count,
++                       u->clear_halt_count,
++                       u->set_halt_count);
++
++    simplelist_addline("LEG:%u/%u CON:%u BRST:%u",
++                       u->legacy_null_response_count,
++                       u->legacy_overlap_count,
++                       s->connection_count,
++                       s->bulk_reset_count);
++
++    /*
++     * C05-C11 is where play/no-play first diverged.
++     * A = CBW arrival
++     * I = CSW queued
++     * D = actual CSW completion
++     */
++    {
++        unsigned int trace_end = MIN(s->scsi_trace_count, 12u);
++
++        for (unsigned int i = 5; i < trace_end; i++) {
++            simplelist_addline(
++                "C%02u:%02X B4:%02X S:%02X A:%u I:%u D:%u",
++                i,
++                s->scsi_trace_opcode[i],
++                s->scsi_trace_cdb4[i],
++                s->scsi_trace_csw_status[i],
++                s->scsi_trace_time[i],
++                s->scsi_trace_csw_issue[i],
++                s->scsi_trace_csw_done[i]);
++        }
++    }
++
++    /*
++     * Newest seven USB control requests.
++     *
++     * T=request type, R=request, V=value, I=index, L=length.
++     */
++    {
++        unsigned int total = u->control_trace_count;
++        unsigned int shown = MIN(total, 7u);
++        unsigned int first = total - shown;
++
++        for (unsigned int n = first; n < total; n++) {
++            unsigned int i = n & 15u;
++
++            simplelist_addline(
++                "U%u T:%02X R:%02X V:%04X I:%04X L:%u",
++                n,
++                u->control_trace_type[i],
++                u->control_trace_request[i],
++                u->control_trace_value[i],
++                u->control_trace_index[i],
++                u->control_trace_length[i]);
++        }
++    }
++
++    /*
++     * LBA/N are now displayed on the ERR line above.
++     */
++#if 0
++    simplelist_addline("LBA:%u N:%u",
++                       s->last_read_lba,
++                       s->last_read_blocks);
++#endif
++
++    if (action == ACTION_NONE)
++        action = ACTION_REDRAW;
++
++    return action;
++}
++
++static bool dbg_usb_msc(void)
++{
++    struct simplelist_info info;
++
++    simplelist_info_init(&info, "USB MSC", 0, NULL);
++    info.scroll_all = true;
++    info.action_callback = dbg_usb_msc_cb;
++
++    return simplelist_show_list(&info);
++}
++#endif /* USB_ENABLE_STORAGE */
++
+ #ifdef USB_ENABLE_AUDIO
+ static int dbg_usb_audio_cb(int action, struct gui_synclist *lists)
+ {
+@@ -2936,6 +3122,9 @@ static const struct {
+ #if defined(ROCKBOX_HAS_LOGF) && defined(USB_ENABLE_SERIAL)
+         {"USB Serial driver (logf)", toggle_usb_serial },
+ #endif
++#ifdef USB_ENABLE_STORAGE
++        {"USB MSC", dbg_usb_msc},
++#endif
+ #if defined(USB_ENABLE_AUDIO)
+         {"USB-DAC", dbg_usb_audio},
+ #endif
+diff --git a/firmware/export/config/ipodvideo.h b/firmware/export/config/ipodvideo.h
+index 56238db755..caf294fcaa 100644
+--- a/firmware/export/config/ipodvideo.h
++++ b/firmware/export/config/ipodvideo.h
+@@ -204,8 +204,8 @@
+ 
+ /* enable these for the experimental usb stack */
+ #define HAVE_USBSTACK
+-#define USB_VENDOR_ID 0x05ac
+-#define USB_PRODUCT_ID 0x1209
++#define USB_VENDOR_ID 0x1234
++#define USB_PRODUCT_ID 0x5678
+ #define HAVE_USB_HID_MOUSE
+ 
+ /* Define this if you have adjustable CPU frequency */
+diff --git a/firmware/export/usb_core.h b/firmware/export/usb_core.h
+index 5aa6e4f33a..5e0ff58c9a 100644
+--- a/firmware/export/usb_core.h
++++ b/firmware/export/usb_core.h
+@@ -71,4 +71,46 @@ void usb_core_notify_set_config(uint8_t config);
+ void usb_core_hotswap_event(int volume,bool inserted);
+ #endif
+ 
++struct usb_core_debug_state
++{
++    unsigned int control_count;
++
++    unsigned int last_request;
++    unsigned int last_request_type;
++    unsigned int last_value;
++    unsigned int last_index;
++    unsigned int last_length;
++
++    unsigned int get_descriptor_count;
++    unsigned int device_descriptor_count;
++    unsigned int config_descriptor_count;
++    unsigned int string_descriptor_count;
++
++    unsigned int set_address_count;
++    unsigned int set_configuration_count;
++    unsigned int requested_configuration;
++    int set_configuration_result;
++
++    unsigned int set_interface_count;
++
++    unsigned int bus_reset_count;
++    unsigned int config_apply_count;
++    unsigned int endpoint_init_count;
++    unsigned int endpoint_deinit_count;
++    unsigned int clear_halt_count;
++    unsigned int set_halt_count;
++
++    unsigned int legacy_null_response_count;
++    unsigned int legacy_overlap_count;
++
++    unsigned int control_trace_count;
++    unsigned int control_trace_type[16];
++    unsigned int control_trace_request[16];
++    unsigned int control_trace_value[16];
++    unsigned int control_trace_index[16];
++    unsigned int control_trace_length[16];
++};
++
++const struct usb_core_debug_state *usb_core_get_debug_state(void);
++
+ #endif
+diff --git a/firmware/export/usb_drv.h b/firmware/export/usb_drv.h
+index 7ce7cb32c9..28d573ec4c 100644
+--- a/firmware/export/usb_drv.h
++++ b/firmware/export/usb_drv.h
+@@ -107,6 +107,7 @@ int usb_drv_deinit_endpoint(int endpoint);
+  *   number
+  * thus in all mode, the frame number can be interpreted as the current millisecond *in USB time*. */
+ int usb_drv_get_frame_number(void);
++int usb_drv_get_frame_index(void);
+ int usb_drv_get_iisoixfr_count(void);
+ #endif
+ 
+diff --git a/firmware/target/arm/usb-drv-arc.c b/firmware/target/arm/usb-drv-arc.c
+index e8c1cc1de1..c49a656cae 100644
+--- a/firmware/target/arm/usb-drv-arc.c
++++ b/firmware/target/arm/usb-drv-arc.c
+@@ -612,6 +612,15 @@ int usb_drv_get_frame_number(void)
+     return (REG_FRINDEX & USB_FRINDEX_MASKS) >> 3;
+ }
+ 
++int usb_drv_get_frame_index(void)
++{
++    /*
++     * Raw USB FRINDEX value.
++     * In high-speed mode bits 2:0 are the 125 us microframe number.
++     */
++    return REG_FRINDEX & USB_FRINDEX_MASKS;
++}
++
+ bool usb_drv_connected(void)
+ {
+     return (REG_PORTSC1 &
+diff --git a/firmware/usb.c b/firmware/usb.c
+index 195ba9b4a5..6368c8ab57 100644
+--- a/firmware/usb.c
++++ b/firmware/usb.c
+@@ -208,7 +208,7 @@ static inline void usb_configure_drivers(int for_state)
+ #ifdef USB_ENABLE_CHARGING_ONLY
+         usb_core_enable_driver(USB_DRIVER_HID, false);
+ #else
+-        usb_core_enable_driver(USB_DRIVER_HID, true);
++        usb_core_enable_driver(USB_DRIVER_HID, false);
+ #endif /* USB_ENABLE_CHARGING_ONLY */
+ #endif /* USB_ENABLE_HID */
+ #ifdef USB_ENABLE_AUDIO
+@@ -231,7 +231,7 @@ static inline void usb_configure_drivers(int for_state)
+         usb_core_enable_driver(USB_DRIVER_MASS_STORAGE, true);
+ #endif
+ #ifdef USB_ENABLE_HID
+-        usb_core_enable_driver(USB_DRIVER_HID, usb_hid);
++        usb_core_enable_driver(USB_DRIVER_HID, false);
+ #endif
+ #ifdef USB_ENABLE_AUDIO
+         usb_core_enable_driver(USB_DRIVER_AUDIO, true); /* config 2: always available, host selects */
+@@ -882,7 +882,7 @@ void usb_release_exclusive_storage(void)
+ void usb_set_hid(bool enable)
+ {
+     usb_hid = enable;
+-    usb_core_enable_driver(USB_DRIVER_HID, usb_hid);
++    usb_core_enable_driver(USB_DRIVER_HID, false);
+ }
+ #endif /* USB_ENABLE_HID */
+ 
+diff --git a/firmware/usbstack/usb_core.c b/firmware/usbstack/usb_core.c
+index 3c7e599d0f..ed718c1b25 100644
+--- a/firmware/usbstack/usb_core.c
++++ b/firmware/usbstack/usb_core.c
+@@ -76,11 +76,7 @@
+ #define USB_MAX_CURRENT 500
+ #endif
+ 
+-#if defined(USB_ENABLE_AUDIO) || defined(USB_ENABLE_IAP_HID)
+-#define NUM_CONFIGS 2
+-#else
+ #define NUM_CONFIGS 1
+-#endif
+ 
+ /*-------------------------------------------------------------------------*/
+ /* USB protocol descriptors: */
+@@ -104,7 +100,7 @@ static struct usb_device_descriptor __attribute__((aligned(2)))
+     .bcdDevice          = 0x0310,
+     .iManufacturer      = 0,
+     .iProduct           = 0,
+-    .iSerialNumber      = USB_STRING_INDEX_SERIAL,
++    .iSerialNumber      = 0,
+     .bNumConfigurations = NUM_CONFIGS
+ } ;
+ 
+@@ -349,6 +345,13 @@ static void usb_core_control_request_handler(struct usb_ctrlrequest* req, void*
+ 
+ static unsigned char response_data[256] USB_DEVBSS_ATTR;
+ 
++static struct usb_core_debug_state usb_core_debug;
++
++const struct usb_core_debug_state *usb_core_get_debug_state(void)
++{
++    return &usb_core_debug;
++}
++
+ #define is_active(driver) ((driver).enabled && (driver).config == usb_config)
+ #define has_if(driver, interface) ((interface) >= (driver).first_interface && (interface) < (driver).last_interface)
+ 
+@@ -612,6 +615,12 @@ static void init_deinit_endpoints(uint8_t conf_index, bool init) {
+                 logf("usb_core: usb_drv_%s_endpoint failed ep=%d dir=%d", init ? "init" : "deinit", epnum, dir);
+                 continue;
+             }
++
++            if(init)
++                usb_core_debug.endpoint_init_count++;
++            else
++                usb_core_debug.endpoint_deinit_count++;
++
+             if(init) {
+                 ep_data[epnum].completion_handler[dir] = alloc->owner[dir]->transfer_complete;
+                 ep_data[epnum].fast_completion_handler[dir] = alloc->owner[dir]->fast_transfer_complete;
+@@ -771,12 +780,14 @@ static void request_handler_device_get_descriptor(struct usb_ctrlrequest* req, v
+ 
+     switch(type) {
+         case USB_DT_DEVICE:
++            usb_core_debug.device_descriptor_count++;
+             ptr = &device_descriptor;
+             size = sizeof(struct usb_device_descriptor);
+             break;
+ 
+         case USB_DT_OTHER_SPEED_CONFIG:
+         case USB_DT_CONFIG: {
++            usb_core_debug.config_descriptor_count++;
+             if(index > NUM_CONFIGS) {
+                 logf("invalid config dt index %u", index);
+                 break;
+@@ -817,6 +828,7 @@ static void request_handler_device_get_descriptor(struct usb_ctrlrequest* req, v
+             ptr = response_data;
+         } break;
+         case USB_DT_STRING:
++            usb_core_debug.string_descriptor_count++;
+             logf("STRING %d", index);
+             if((unsigned)index < USB_STRING_INDEX_MAX) {
+                 size = usb_strings[index]->bLength;
+@@ -869,6 +881,7 @@ static void usb_core_do_set_addr(uint8_t address)
+ 
+ static int usb_core_do_set_config(uint8_t new_config)
+ {
++    usb_core_debug.config_apply_count++;
+     logf("usb_core: SET_CONFIG %d to %d", usb_config, new_config);
+ 
+     if(new_config > NUM_CONFIGS) {
+@@ -929,8 +942,10 @@ static void usb_core_do_clear_feature(int recip, int recip_nr, int feature)
+     logf("usb_core: CLEAR FEATURE (%d,%d,%d)", recip, recip_nr, feature);
+     if(recip == USB_RECIP_ENDPOINT)
+     {
+-        if(feature == USB_ENDPOINT_HALT)
++        if(feature == USB_ENDPOINT_HALT) {
++            usb_core_debug.clear_halt_count++;
+             usb_drv_stall(EP_NUM(recip_nr), false, EP_DIR(recip_nr));
++        }
+     }
+ }
+ 
+@@ -944,15 +959,24 @@ static void request_handler_device(struct usb_ctrlrequest* req, void* reqdata)
+             response_data[0] = usb_config;
+             usb_drv_control_response(USB_CONTROL_ACK, response_data, 1);
+             break;
+-        case USB_REQ_SET_CONFIGURATION:
++        case USB_REQ_SET_CONFIGURATION: {
++            usb_core_debug.set_configuration_count++;
++            usb_core_debug.requested_configuration = req->wValue;
++
+             usb_drv_cancel_all_transfers();
+-            if(usb_core_do_set_config(req->wValue) == 0) {
++
++            int result = usb_core_do_set_config(req->wValue);
++            usb_core_debug.set_configuration_result = result;
++
++            if(result == 0) {
+                 usb_drv_control_response(USB_CONTROL_ACK, NULL, 0);
+             } else {
+                 usb_drv_control_response(USB_CONTROL_STALL, NULL, 0);
+             }
+             break;
++        }
+         case USB_REQ_SET_ADDRESS:
++            usb_core_debug.set_address_count++;
+             /* NOTE: We really have no business handling this and drivers
+              * should just handle it themselves. We don't care beyond
+              * knowing if we've been assigned an address yet, or not. */
+@@ -963,6 +987,7 @@ static void request_handler_device(struct usb_ctrlrequest* req, void* reqdata)
+             usb_core_do_set_addr(address);
+             break;
+         case USB_REQ_GET_DESCRIPTOR:
++            usb_core_debug.get_descriptor_count++;
+             logf("usb_core: GET_DESC %d", req->wValue >> 8);
+             request_handler_device_get_descriptor(req, reqdata);
+             break;
+@@ -1010,6 +1035,7 @@ static void request_handler_interface_standard(struct usb_ctrlrequest* req, void
+     switch (req->bRequest)
+     {
+         case USB_REQ_SET_INTERFACE:
++            usb_core_debug.set_interface_count++;
+             logf("usb_core: SET_INTERFACE");
+         case USB_REQ_GET_INTERFACE:
+             control_request_handler_drivers(req, reqdata);
+@@ -1083,8 +1109,10 @@ static void request_handler_endpoint_standard(struct usb_ctrlrequest* req, void*
+             break;
+         case USB_REQ_SET_FEATURE:
+             logf("usb_core: SET FEATURE (%d)", req->wValue);
+-            if(req->wValue == USB_ENDPOINT_HALT)
++            if(req->wValue == USB_ENDPOINT_HALT) {
++               usb_core_debug.set_halt_count++;
+                usb_drv_stall(EP_NUM(req->wIndex), true, EP_DIR(req->wIndex));
++            }
+ 
+             usb_drv_control_response(USB_CONTROL_ACK, NULL, 0);
+             break;
+@@ -1124,6 +1152,22 @@ static void request_handler_endpoint(struct usb_ctrlrequest* req, void* reqdata)
+ /* Handling USB requests starts here */
+ static void usb_core_control_request_handler(struct usb_ctrlrequest* req, void* reqdata)
+ {
++    usb_core_debug.control_count++;
++    usb_core_debug.last_request = req->bRequest;
++    usb_core_debug.last_request_type = req->bRequestType;
++    usb_core_debug.last_value = req->wValue;
++    usb_core_debug.last_index = req->wIndex;
++    usb_core_debug.last_length = req->wLength;
++
++    {
++        unsigned int ti = usb_core_debug.control_trace_count++ & 15u;
++        usb_core_debug.control_trace_type[ti] = req->bRequestType;
++        usb_core_debug.control_trace_request[ti] = req->bRequest;
++        usb_core_debug.control_trace_value[ti] = req->wValue;
++        usb_core_debug.control_trace_index[ti] = req->wIndex;
++        usb_core_debug.control_trace_length[ti] = req->wLength;
++    }
++
+ #ifdef HAVE_USB_CHARGING_ENABLE
+     timeout_cancel(&usb_no_host_timeout);
+     if(usb_no_host) {
+@@ -1167,6 +1211,7 @@ static void do_bus_reset(void) {
+ /* called by usb_drv_int() */
+ void usb_core_bus_reset(void)
+ {
++    usb_core_debug.bus_reset_count++;
+     logf("usb_core: bus reset");
+     if(bus_reset_pending) {
+         return;
+@@ -1306,6 +1351,7 @@ void usb_drv_control_response(enum usb_control_response resp,
+      */
+     if (num_active == 0)
+     {
++        usb_core_debug.legacy_null_response_count++;
+         //panicf("null ctrl req");
+         return;
+     }
+@@ -1326,6 +1372,7 @@ void usb_drv_control_response(enum usb_control_response resp,
+      */
+     if (num_active > 1)
+     {
++        usb_core_debug.legacy_overlap_count++;
+         active_request = NULL;
+         num_active_requests = 0;
+         usb_drv_stall(EP_CONTROL, true, true);
+diff --git a/firmware/usbstack/usb_storage.c b/firmware/usbstack/usb_storage.c
+index 4aadf1e0f1..6c5b217d73 100644
+--- a/firmware/usbstack/usb_storage.c
++++ b/firmware/usbstack/usb_storage.c
+@@ -31,6 +31,13 @@
+ /* Needed to get at the audio buffer */
+ #include "audio.h"
+ #include "usb_storage.h"
++
++static struct usb_storage_debug_state usb_storage_debug;
++
++const struct usb_storage_debug_state *usb_storage_get_debug_state(void)
++{
++    return &usb_storage_debug;
++}
+ #if CONFIG_RTC
+ #include "timefuncs.h"
+ #endif
+@@ -128,8 +135,12 @@
+ #define SENSE_MEDIUM_ERROR          0x03
+ #define SENSE_ILLEGAL_REQUEST       0x05
+ #define SENSE_UNIT_ATTENTION        0x06
++#define SENSE_DATA_PROTECT          0x07
+ 
+ #define ASC_MEDIUM_NOT_PRESENT      0x3a
++#define ASC_LOGICAL_UNIT_NOT_READY  0x04
++#define ASCQ_BECOMING_READY         0x01
++#define ASC_WRITE_PROTECTED         0x27
+ #define ASC_INVALID_FIELD_IN_CBD    0x24
+ #define ASC_LBA_OUT_OF_RANGE        0x21
+ #define ASC_WRITE_ERROR             0x0C
+@@ -137,7 +148,6 @@
+ #define ASC_NOT_READY               0x04
+ #define ASC_INVALID_COMMAND         0x20
+ 
+-#define ASCQ_BECOMING_READY         0x01
+ 
+ #define SCSI_FORMAT_CAPACITY_FORMATTED_MEDIA 0x02000000
+ 
+@@ -312,6 +322,10 @@ static void send_command_result(void *data,int size);
+ static void send_command_failed_result(void);
+ static void send_block_data(void *data,int size);
+ static void receive_block_data(void *data,int size);
++static void kenwood_unpatch_mbr_from_512(unsigned char *data,
++                                         unsigned int size);
++static void kenwood_unpatch_fat32_bpb_from_512(unsigned char *data,
++                                               unsigned int size);
+ #if CONFIG_RTC
+ static void receive_time(void);
+ #endif
+@@ -322,6 +336,32 @@ static bool locked[NUM_DRIVES];
+ 
+ static int usb_interface;
+ 
++/* Multiplier currently used for host-visible USB blocks. */
++static unsigned int usb_storage_host_block_multiplier = 1;
++
++/*
++ * Kenwood compatibility:
++ * Keep one host-visible 512-byte sector in RAM for the lifetime of the
++ * current USB connection.  This allows the Kenwood to write/read back the
++ * translated FAT32 boot sector without modifying the native iPod disk.
++ */
++/*
++ * Kenwood pacing sweep position.
++ *
++ * Keep this outside usb_storage_debug so usb_storage_init() can clear
++ * diagnostic counters without restarting the pacing sweep.
++ */
++static unsigned int kenwood_pace_sweep_index = 0;
++
++static bool kenwood_shadow_valid = false;
++static sector_t kenwood_shadow_lba = 0;
++static unsigned char kenwood_shadow_sector[512];
++
++/* Original translated sector as presented to the Kenwood. */
++static bool kenwood_reference_valid = false;
++static sector_t kenwood_reference_lba = 0;
++static unsigned char kenwood_reference_sector[512];
++
+ struct usb_class_driver_ep_allocation usb_storage_ep_allocs[2] = {
+     {.type = USB_ENDPOINT_XFER_BULK, .dir = DIR_IN, .optional = false},
+     {.type = USB_ENDPOINT_XFER_BULK, .dir = DIR_OUT, .optional = false},
+@@ -403,6 +443,8 @@ void usb_set_skip_first_drive(bool skip)
+ /* called by usb_core_init() */
+ void usb_storage_init(void)
+ {
++    memset(&usb_storage_debug, 0, sizeof(usb_storage_debug));
++    usb_storage_debug.init_count++;
+     logf("usb_storage_init done");
+ }
+ 
+@@ -414,6 +456,7 @@ int usb_storage_set_first_interface(int interface)
+ 
+ int usb_storage_get_config_descriptor(unsigned char *dest,int max_packet_size)
+ {
++    usb_storage_debug.config_descriptor_count++;
+     unsigned char *orig_dest = dest;
+ 
+     interface_descriptor.bInterfaceNumber = usb_interface;
+@@ -438,6 +481,64 @@ static int usb_handle = 0;
+ #endif
+ void usb_storage_init_connection(void)
+ {
++    usb_storage_debug.connection_count++;
++
++    /*
++     * Kenwood pacing sweep.
++     *
++     * Advance to the next delay on each MSC connection so several
++     * candidate phase shifts can be tested from one firmware build.
++     */
++    {
++        static const unsigned int kenwood_pace_delays[] = {
++            0, 250, 500, 750,
++            1000, 1250, 1500, 1750,
++            2000, 2125, 2250, 2375,
++            2500, 2750, 3000
++        };
++
++        unsigned int pace_count =
++            sizeof(kenwood_pace_delays) /
++            sizeof(kenwood_pace_delays[0]);
++
++        unsigned int pace_index =
++            kenwood_pace_sweep_index % pace_count;
++
++        usb_storage_debug.kenwood_pace_fired = 0;
++        usb_storage_debug.kenwood_pace_delay_us =
++            kenwood_pace_delays[pace_index];
++
++        kenwood_pace_sweep_index =
++            (kenwood_pace_sweep_index + 1) % pace_count;
++    }
++
++    kenwood_shadow_valid = false;
++    kenwood_shadow_lba = 0;
++    kenwood_reference_valid = false;
++    kenwood_reference_lba = 0;
++
++    memset(usb_storage_debug.read_window_lba, 0,
++           sizeof(usb_storage_debug.read_window_lba));
++    memset(usb_storage_debug.read_window_blocks, 0,
++           sizeof(usb_storage_debug.read_window_blocks));
++    memset(usb_storage_debug.read_window_hash, 0,
++           sizeof(usb_storage_debug.read_window_hash));
++
++    usb_storage_debug.fsinfo_capture_count = 0;
++    usb_storage_debug.fsinfo_lead_sig = 0;
++    usb_storage_debug.fsinfo_struct_sig = 0;
++    usb_storage_debug.fsinfo_free_count = 0;
++    usb_storage_debug.fsinfo_next_free = 0;
++    usb_storage_debug.fsinfo_trail_sig = 0;
++
++    usb_storage_debug.bpb_diff_count = 0;
++    memset(usb_storage_debug.bpb_diff_offset, 0,
++           sizeof(usb_storage_debug.bpb_diff_offset));
++    memset(usb_storage_debug.bpb_diff_before, 0,
++           sizeof(usb_storage_debug.bpb_diff_before));
++    memset(usb_storage_debug.bpb_diff_after, 0,
++           sizeof(usb_storage_debug.bpb_diff_after));
++
+     logf("ums: set config");
+     /* prime rx endpoint. We only need room for commands */
+     state = WAITING_FOR_COMMAND;
+@@ -496,6 +597,19 @@ void usb_storage_disconnect(void)
+ void usb_storage_transfer_complete(int ep,int dir,int status,int length)
+ {
+     (void)ep;
++
++    usb_storage_debug.transfer_count++;
++    usb_storage_debug.last_transfer_length = length;
++    usb_storage_debug.last_transfer_status = status;
++
++    if(status != 0)
++        usb_storage_debug.transfer_error_count++;
++
++    if(dir == USB_DIR_OUT)
++        usb_storage_debug.transfer_out_count++;
++    else if(dir == USB_DIR_IN)
++        usb_storage_debug.transfer_in_count++;
++
+     struct command_block_wrapper* cbw = (void*)cbw_buffer;
+ #if CONFIG_RTC
+     struct tm tm;
+@@ -509,6 +623,23 @@ void usb_storage_transfer_complete(int ep,int dir,int status,int length)
+                 logf("IN received in RECEIVING");
+             }
+             logf("scsi write %llu %d", cur_cmd.sector, cur_cmd.count);
++
++            if(usb_storage_debug.write_diag_active &&
++               cur_cmd.cur_cmd == SCSI_WRITE_10 &&
++               cur_cmd.sector == 257040) {
++                usb_storage_debug.write_diag_rx_length = length;
++                usb_storage_debug.write_diag_rx_status = status;
++            }
++
++            if(usb_storage_debug.timing_active &&
++               cur_cmd.cur_cmd == SCSI_WRITE_10 &&
++               cur_cmd.sector == 257040 &&
++               !(usb_storage_debug.timing_mask & 0x10)) {
++                usb_storage_debug.timing_write_data_done =
++                    USEC_TIMER - usb_storage_debug.timing_t0;
++                usb_storage_debug.timing_mask |= 0x10;
++            }
++
+             if(status==0) {
+                 if((unsigned int)length!=(cur_cmd.block_size* cur_cmd.count)
+                   && (unsigned int)length!=WRITE_BUFFER_SIZE) {
+@@ -535,13 +666,73 @@ void usb_storage_transfer_complete(int ep,int dir,int status,int length)
+                         cur_cmd.data[cur_cmd.data_select],
+                         MIN(WRITE_BUFFER_SIZE/cur_cmd.block_size, cur_cmd.count)*cur_cmd.block_size);
+ #else
+-                int result = USBSTOR_WRITE_SECTORS_FILTER();
++                int result = 0;
++
++                /*
++                 * Kenwood compatibility view is intentionally read-only.
++                 *
++                 * Consume the host's DATA-OUT payload so Bulk-Only Transport
++                 * stays synchronized, but never commit WRITE(10)/WRITE(16)
++                 * data to the native iPod disk.
++                 */
++                if(cur_cmd.cur_cmd == SCSI_WRITE_10
++#ifdef STORAGE_64BIT_SECTOR
++                   || cur_cmd.cur_cmd == SCSI_WRITE_16
++#endif
++                  ) {
++                    /*
++                     * The Kenwood currently issues one 512-byte WRITE(10) to
++                     * the translated FAT32 boot sector.  Preserve that sector
++                     * in RAM so a later READ(10) sees exactly what it wrote,
++                     * while still never touching physical storage.
++                     */
++                    if(cur_cmd.cur_cmd == SCSI_WRITE_10 &&
++                       cur_cmd.block_size == 512 &&
++                       cur_cmd.count == 1) {
++                        unsigned int i;
++                        unsigned int stored = 0;
++
++                        memcpy(kenwood_shadow_sector,
++                               cur_cmd.data[cur_cmd.data_select], 512);
++                        kenwood_shadow_lba = cur_cmd.sector;
++                        kenwood_shadow_valid = true;
++
++                        usb_storage_debug.bpb_diff_count = 0;
++
++                        if(kenwood_reference_valid &&
++                           kenwood_reference_lba == cur_cmd.sector) {
++                            for(i = 0; i < 512; i++) {
++                                unsigned int before =
++                                    kenwood_reference_sector[i];
++                                unsigned int after =
++                                    cur_cmd.data[cur_cmd.data_select][i];
++
++                                if(before != after) {
++                                    usb_storage_debug.bpb_diff_count++;
++
++                                    if(stored < 4) {
++                                        usb_storage_debug.bpb_diff_offset[stored] = i;
++                                        usb_storage_debug.bpb_diff_before[stored] = before;
++                                        usb_storage_debug.bpb_diff_after[stored] = after;
++                                        stored++;
++                                    }
++                                }
++                            }
++                        }
++                    }
+ 
+-                if (result == 0) {
+-                    result = storage_write_sectors(IF_MD(cur_cmd.lun,)
+-                        cur_cmd.sector,
+-                        MIN(WRITE_BUFFER_SIZE/cur_cmd.block_size, cur_cmd.count),
+-                        cur_cmd.data[cur_cmd.data_select]);
++                    result = 0;
++                }
++                else {
++                    result = USBSTOR_WRITE_SECTORS_FILTER();
++
++                    if(result == 0) {
++                        result = storage_write_sectors(IF_MD(cur_cmd.lun,)
++                            cur_cmd.sector,
++                            MIN(WRITE_BUFFER_SIZE/cur_cmd.block_size,
++                                cur_cmd.count),
++                            cur_cmd.data[cur_cmd.data_select]);
++                    }
+                 }
+ 
+                 if(result != 0) {
+@@ -553,6 +744,13 @@ void usb_storage_transfer_complete(int ep,int dir,int status,int length)
+                 }
+ #endif
+                 if(next_count==0) {
++                    /*
++                     * Kenwood compatibility:
++                     * WRITE(10/16) data has been consumed but deliberately
++                     * discarded above. Report success so the host sees a
++                     * normal writable USB disk while the native iPod disk
++                     * remains physically untouched.
++                     */
+                     send_csw(UMS_STATUS_GOOD);
+                 }
+ 
+@@ -575,25 +773,149 @@ void usb_storage_transfer_complete(int ep,int dir,int status,int length)
+         case WAITING_FOR_CSW_COMPLETION_OR_COMMAND:
+             if(dir==USB_DIR_IN) {
+                 /* This was the CSW */
++
++                if(usb_storage_debug.scsi_trace_current < 24) {
++                    usb_storage_debug.scsi_trace_csw_done[
++                        usb_storage_debug.scsi_trace_current] =
++                        USEC_TIMER - usb_storage_debug.scsi_trace_t0;
++                }
++
++                if(usb_storage_debug.timing_active) {
++                    if(usb_storage_debug.timing_pending_csw == 1 &&
++                       !(usb_storage_debug.timing_mask & 0x04)) {
++                        usb_storage_debug.timing_r236_csw_done =
++                            USEC_TIMER - usb_storage_debug.timing_t0;
++                        usb_storage_debug.timing_mask |= 0x04;
++                        usb_storage_debug.timing_pending_csw = 0;
++                    }
++                    else if(usb_storage_debug.timing_pending_csw == 2 &&
++                            !(usb_storage_debug.timing_mask & 0x40)) {
++                        usb_storage_debug.timing_write_csw_done =
++                            USEC_TIMER - usb_storage_debug.timing_t0;
++                        usb_storage_debug.timing_mask |= 0x40;
++                        usb_storage_debug.timing_pending_csw = 0;
++                    }
++                }
++
++                if(usb_storage_debug.write_diag_active &&
++                   usb_storage_debug.write_diag_race == 0) {
++                    usb_storage_debug.write_diag_race = 1;
++                }
++
+                 state = WAITING_FOR_COMMAND;
+             }
+             else {
+                 /* This was the command */
++
++                if(usb_storage_debug.timing_active) {
++                    if(usb_storage_debug.timing_pending_csw == 1 &&
++                       cbw->command_block[0] == SCSI_WRITE_10 &&
++                       !(usb_storage_debug.timing_mask & 0x08)) {
++                        usb_storage_debug.timing_write_cbw =
++                            USEC_TIMER - usb_storage_debug.timing_t0;
++                        usb_storage_debug.timing_mask |= 0x08;
++                    }
++                    else if(usb_storage_debug.timing_pending_csw == 2 &&
++                            !(usb_storage_debug.timing_mask & 0x80)) {
++                        usb_storage_debug.timing_next_cbw =
++                            USEC_TIMER - usb_storage_debug.timing_t0;
++                        usb_storage_debug.timing_next_opcode =
++                            cbw->command_block[0];
++                        usb_storage_debug.timing_mask |= 0x80;
++                    }
++                }
++
++                if(usb_storage_debug.write_diag_active &&
++                   usb_storage_debug.write_diag_race == 0) {
++                    usb_storage_debug.write_diag_race = 2;
++
++                    usb_storage_debug.write_diag_next_opcode =
++                        cbw->command_block[0];
++                    usb_storage_debug.write_diag_next_tag =
++                        letoh32(cbw->tag);
++                }
++
+                 state = WAITING_FOR_CSW_COMPLETION;
+                 /* We now have the CBW, but we won't execute it yet to avoid
+                  * issues with the still-pending CSW */
+             }
+             break;
+         case WAITING_FOR_COMMAND:
++            usb_storage_debug.waiting_command_count++;
++
+             if(dir==USB_DIR_IN) {
+                 logf("IN received in WAITING_FOR_COMMAND");
+             }
++
++            if(usb_storage_debug.timing_active) {
++                if(cbw->command_block[0] == SCSI_WRITE_10 &&
++                   !(usb_storage_debug.timing_mask & 0x08)) {
++                    usb_storage_debug.timing_write_cbw =
++                        USEC_TIMER - usb_storage_debug.timing_t0;
++                    usb_storage_debug.timing_mask |= 0x08;
++                }
++                else if((usb_storage_debug.timing_mask & 0x40) &&
++                        !(usb_storage_debug.timing_mask & 0x80)) {
++                    usb_storage_debug.timing_next_cbw =
++                        USEC_TIMER - usb_storage_debug.timing_t0;
++                    usb_storage_debug.timing_next_opcode =
++                        cbw->command_block[0];
++                    usb_storage_debug.timing_mask |= 0x80;
++                }
++            }
++
++            if(usb_storage_debug.write_diag_active &&
++               usb_storage_debug.write_diag_next_path == 0) {
++                usb_storage_debug.write_diag_next_path = 1;
++                usb_storage_debug.write_diag_next_opcode =
++                    cbw->command_block[0];
++                usb_storage_debug.write_diag_next_tag =
++                    letoh32(cbw->tag);
++            }
++
+             handle_scsi(cbw);
+             break;
+         case WAITING_FOR_CSW_COMPLETION:
+             if(dir==USB_DIR_OUT) {
+                 logf("OUT received in WAITING_FOR_CSW_COMPLETION");
+             }
++
++            if(dir==USB_DIR_IN &&
++               usb_storage_debug.scsi_trace_current < 24) {
++                usb_storage_debug.scsi_trace_csw_done[
++                    usb_storage_debug.scsi_trace_current] =
++                    USEC_TIMER - usb_storage_debug.scsi_trace_t0;
++            }
++
++            if(dir==USB_DIR_IN && usb_storage_debug.timing_active) {
++                if(usb_storage_debug.timing_pending_csw == 1 &&
++                   !(usb_storage_debug.timing_mask & 0x04)) {
++                    usb_storage_debug.timing_r236_csw_done =
++                        USEC_TIMER - usb_storage_debug.timing_t0;
++                    usb_storage_debug.timing_mask |= 0x04;
++                    usb_storage_debug.timing_pending_csw = 0;
++                }
++                else if(usb_storage_debug.timing_pending_csw == 2 &&
++                        !(usb_storage_debug.timing_mask & 0x40)) {
++                    usb_storage_debug.timing_write_csw_done =
++                        USEC_TIMER - usb_storage_debug.timing_t0;
++                    usb_storage_debug.timing_mask |= 0x40;
++                    usb_storage_debug.timing_pending_csw = 0;
++                }
++            }
++
++            if(usb_storage_debug.write_diag_active &&
++               usb_storage_debug.write_diag_next_path == 0) {
++                usb_storage_debug.write_diag_next_path = 2;
++
++                if(usb_storage_debug.write_diag_next_opcode == 0) {
++                    usb_storage_debug.write_diag_next_opcode =
++                        cbw->command_block[0];
++                    usb_storage_debug.write_diag_next_tag =
++                        letoh32(cbw->tag);
++                }
++            }
++
+             handle_scsi(cbw);
+             break;
+         case SENDING_RESULT:
+@@ -627,6 +949,17 @@ void usb_storage_transfer_complete(int ep,int dir,int status,int length)
+             if(status==0) {
+                 if(cur_cmd.count==0) {
+                     //logf("data sent, now send csw");
++
++                    if(usb_storage_debug.timing_active &&
++                       cur_cmd.cur_cmd == SCSI_READ_10 &&
++                       usb_storage_debug.last_read_lba == 734042 &&
++                       usb_storage_debug.last_read_blocks == 30 &&
++                       !(usb_storage_debug.timing_mask & 0x01)) {
++                        usb_storage_debug.timing_r236_data_done =
++                            USEC_TIMER - usb_storage_debug.timing_t0;
++                        usb_storage_debug.timing_mask |= 0x01;
++                    }
++
+                     if(cur_cmd.last_result!=0) {
+                         /* The last read failed. */
+                         send_csw(UMS_STATUS_FAIL);
+@@ -635,8 +968,42 @@ void usb_storage_transfer_complete(int ep,int dir,int status,int length)
+                         cur_sense_data.ascq=0;
+                         return;
+                     }
+-                    else
+-                        send_csw(UMS_STATUS_GOOD);
++                    else {
++                        /*
++                         * Kenwood phase-control experiment.
++                         *
++                         * Capture the ARC USB frame index immediately before
++                         * and after the programmable delay, then again just
++                         * after the CSW has been submitted.
++                         *
++                         * In USB high-speed mode bits 2:0 of FRINDEX are the
++                         * 125 us microframe number.
++                         */
++                        if(cur_cmd.cur_cmd == SCSI_READ_10 &&
++                           usb_storage_debug.last_read_lba == 0 &&
++                           usb_storage_debug.last_read_blocks == 8 &&
++                           !usb_storage_debug.kenwood_pace_fired) {
++                            usb_storage_debug.kenwood_pace_fired = 1;
++                            usb_storage_debug.kenwood_pace_count++;
++
++                            usb_storage_debug.kenwood_frindex_before =
++                                usb_drv_get_frame_index();
++
++                            if(usb_storage_debug.kenwood_pace_delay_us != 0)
++                                udelay(usb_storage_debug.kenwood_pace_delay_us);
++
++                            usb_storage_debug.kenwood_frindex_after_delay =
++                                usb_drv_get_frame_index();
++
++                            send_csw(UMS_STATUS_GOOD);
++
++                            usb_storage_debug.kenwood_frindex_after_csw =
++                                usb_drv_get_frame_index();
++                        }
++                        else {
++                            send_csw(UMS_STATUS_GOOD);
++                        }
++                    }
+                 }
+                 else {
+                     send_and_read_next();
+@@ -696,6 +1063,7 @@ static void usb_storage_send_smart(uint8_t cmd)
+ /* called by usb_core_control_request() */
+ bool usb_storage_control_request(struct usb_ctrlrequest* req, void* reqdata, unsigned char* dest)
+ {
++    usb_storage_debug.control_request_count++;
+     bool handled = false;
+ 
+     (void)dest;
+@@ -703,6 +1071,7 @@ bool usb_storage_control_request(struct usb_ctrlrequest* req, void* reqdata, uns
+ 
+     switch (req->bRequest) {
+         case USB_BULK_GET_MAX_LUN: {
++            usb_storage_debug.get_max_lun_count++;
+             *tb.max_lun = storage_num_drives() - 1;
+ #if defined(HAVE_MULTIDRIVE)
+             if(skip_first) (*tb.max_lun) --;
+@@ -714,6 +1083,7 @@ bool usb_storage_control_request(struct usb_ctrlrequest* req, void* reqdata, uns
+         }
+ 
+         case USB_BULK_RESET_REQUEST:
++            usb_storage_debug.bulk_reset_count++;
+             logf("ums: bulk reset");
+             state = WAITING_FOR_COMMAND;
+             /* UMS BOT 3.1 says The device shall preserve the value of its bulk
+@@ -731,15 +1101,373 @@ bool usb_storage_control_request(struct usb_ctrlrequest* req, void* reqdata, uns
+     return handled;
+ }
+ 
++static unsigned int kenwood_mbr_get_le32(const unsigned char *p)
++{
++    return (unsigned int)p[0]
++        | ((unsigned int)p[1] << 8)
++        | ((unsigned int)p[2] << 16)
++        | ((unsigned int)p[3] << 24);
++}
++
++static void kenwood_mbr_put_le32(unsigned char *p, unsigned int value)
++{
++    p[0] = value & 0xff;
++    p[1] = (value >> 8) & 0xff;
++    p[2] = (value >> 16) & 0xff;
++    p[3] = (value >> 24) & 0xff;
++}
++
++static void kenwood_patch_mbr_for_512(unsigned char *data,
++                                     unsigned int size)
++{
++#ifdef MAX_VIRT_SECTOR_SIZE
++    unsigned int mult;
++    unsigned char fat_entry[16];
++    bool found = false;
++    int i;
++
++    /*
++     * The iPod keeps its normal 2048-byte virtual-sector partition table
++     * internally.
++     *
++     * For Kenwood, present the RAM copy as the simplest possible flash drive:
++     * exactly one FAT32 partition in MBR slot 0 and slots 1-3 completely zero.
++     * Nothing here is written back to the physical iPod/iFlash disk.
++     */
++    if(cur_cmd.sector != 0 || size < 512 ||
++       usb_storage_host_block_multiplier != 1)
++        return;
++
++    mult = disk_get_sector_multiplier(IF_MD(cur_cmd.lun));
++
++    if(mult <= 1)
++        return;
++
++    if(data[510] != 0x55 || data[511] != 0xaa)
++        return;
++
++    /*
++     * Find the existing FAT32 partition before clearing the table.
++     * 0x0b = FAT32 CHS
++     * 0x0c = FAT32 LBA
++     */
++    for(i = 0; i < 4; i++) {
++        unsigned int off = 446 + i * 16;
++        unsigned int start_lba = kenwood_mbr_get_le32(&data[off + 8]);
++        unsigned int count = kenwood_mbr_get_le32(&data[off + 12]);
++        unsigned int type = data[off + 4];
++
++        if((type == 0x0b || type == 0x0c) &&
++           start_lba != 0 && count != 0) {
++            memcpy(fat_entry, &data[off], sizeof(fat_entry));
++
++            kenwood_mbr_put_le32(&fat_entry[8], start_lba * mult);
++            kenwood_mbr_put_le32(&fat_entry[12], count * mult);
++
++            found = true;
++            break;
++        }
++    }
++
++    if(!found)
++        return;
++
++    memset(&data[446], 0, 16 * 4);
++    memcpy(&data[446], fat_entry, sizeof(fat_entry));
++#else
++    (void)data;
++    (void)size;
++#endif
++}
++
++static unsigned int kenwood_bpb_get_le16(const unsigned char *p)
++{
++    return (unsigned int)p[0] | ((unsigned int)p[1] << 8);
++}
++
++static void kenwood_bpb_put_le16(unsigned char *p, unsigned int value)
++{
++    p[0] = value & 0xff;
++    p[1] = (value >> 8) & 0xff;
++}
++
++static void kenwood_patch_fat32_bpb_for_512(unsigned char *data,
++                                            unsigned int size)
++{
++#ifdef MAX_VIRT_SECTOR_SIZE
++    unsigned int mult;
++    unsigned int off;
++
++    if(usb_storage_host_block_multiplier != 1)
++        return;
++
++    mult = disk_get_sector_multiplier(IF_MD(cur_cmd.lun));
++
++    if(mult <= 1)
++        return;
++
++    /*
++     * Examine each 512-byte USB sector in this transfer.  This catches
++     * both the primary FAT32 boot sector and its backup copy.
++     */
++    for(off = 0; off + 512 <= size; off += 512) {
++        unsigned char *b = &data[off];
++        unsigned int bps;
++        unsigned int spc;
++        unsigned int reserved;
++        unsigned int fsinfo;
++        unsigned int backup;
++
++        if(b[510] != 0x55 || b[511] != 0xaa)
++            continue;
++
++        bps = kenwood_bpb_get_le16(&b[11]);
++
++        if(bps != 2048)
++            continue;
++
++        /* FAT32 identifies itself here in the extended BPB. */
++        if(memcmp(&b[82], "FAT32   ", 8) != 0)
++            continue;
++
++        spc = b[13];
++        reserved = kenwood_bpb_get_le16(&b[14]);
++        fsinfo = kenwood_bpb_get_le16(&b[48]);
++        backup = kenwood_bpb_get_le16(&b[50]);
++
++        /* Preserve the same byte-sized clusters and filesystem regions. */
++        kenwood_bpb_put_le16(&b[11], 512);
++        b[13] = spc * mult;
++        kenwood_bpb_put_le16(&b[14], reserved * mult);
++
++        kenwood_mbr_put_le32(&b[28],
++            kenwood_mbr_get_le32(&b[28]) * mult);
++
++        kenwood_mbr_put_le32(&b[32],
++            kenwood_mbr_get_le32(&b[32]) * mult);
++
++        kenwood_mbr_put_le32(&b[36],
++            kenwood_mbr_get_le32(&b[36]) * mult);
++
++        if(fsinfo != 0 && fsinfo != 0xffff)
++            kenwood_bpb_put_le16(&b[48], fsinfo * mult);
++
++        if(backup != 0 && backup != 0xffff)
++            kenwood_bpb_put_le16(&b[50], backup * mult);
++    }
++#else
++    (void)data;
++    (void)size;
++#endif
++}
++
++static void kenwood_unpatch_mbr_from_512(unsigned char *data,
++                                          unsigned int size)
++{
++#ifdef MAX_VIRT_SECTOR_SIZE
++    unsigned int mult;
++    int i;
++
++    if(cur_cmd.sector != 0 || size < 512 ||
++       usb_storage_host_block_multiplier != 1)
++        return;
++
++    mult = disk_get_sector_multiplier(IF_MD(cur_cmd.lun));
++
++    if(mult <= 1)
++        return;
++
++    if(data[510] != 0x55 || data[511] != 0xaa)
++        return;
++
++    for(i = 0; i < 4; i++) {
++        unsigned int off = 446 + i * 16;
++        unsigned int start = kenwood_mbr_get_le32(&data[off + 8]);
++        unsigned int count = kenwood_mbr_get_le32(&data[off + 12]);
++
++        if(start != 0 && (start % mult) == 0)
++            kenwood_mbr_put_le32(&data[off + 8], start / mult);
++
++        if(count != 0 && (count % mult) == 0)
++            kenwood_mbr_put_le32(&data[off + 12], count / mult);
++    }
++#else
++    (void)data;
++    (void)size;
++#endif
++}
++
++static void kenwood_unpatch_fat32_bpb_from_512(unsigned char *data,
++                                               unsigned int size)
++{
++#ifdef MAX_VIRT_SECTOR_SIZE
++    unsigned int mult;
++    unsigned int off;
++
++    if(usb_storage_host_block_multiplier != 1)
++        return;
++
++    mult = disk_get_sector_multiplier(IF_MD(cur_cmd.lun));
++
++    if(mult <= 1)
++        return;
++
++    for(off = 0; off + 512 <= size; off += 512) {
++        unsigned char *b = &data[off];
++        unsigned int spc;
++        unsigned int reserved;
++        unsigned int fsinfo;
++        unsigned int backup;
++        unsigned int value;
++
++        if(b[510] != 0x55 || b[511] != 0xaa)
++            continue;
++
++        if(kenwood_bpb_get_le16(&b[11]) != 512)
++            continue;
++
++        if(memcmp(&b[82], "FAT32   ", 8) != 0)
++            continue;
++
++        spc = b[13];
++        reserved = kenwood_bpb_get_le16(&b[14]);
++        fsinfo = kenwood_bpb_get_le16(&b[48]);
++        backup = kenwood_bpb_get_le16(&b[50]);
++
++        if((spc % mult) != 0 ||
++           (reserved % mult) != 0)
++            continue;
++
++        kenwood_bpb_put_le16(&b[11], 2048);
++        b[13] = spc / mult;
++        kenwood_bpb_put_le16(&b[14], reserved / mult);
++
++        value = kenwood_mbr_get_le32(&b[28]);
++        if(value != 0 && (value % mult) == 0)
++            kenwood_mbr_put_le32(&b[28], value / mult);
++
++        value = kenwood_mbr_get_le32(&b[32]);
++        if(value != 0 && (value % mult) == 0)
++            kenwood_mbr_put_le32(&b[32], value / mult);
++
++        value = kenwood_mbr_get_le32(&b[36]);
++        if(value != 0 && (value % mult) == 0)
++            kenwood_mbr_put_le32(&b[36], value / mult);
++
++        if(fsinfo != 0 && fsinfo != 0xffff &&
++           (fsinfo % mult) == 0)
++            kenwood_bpb_put_le16(&b[48], fsinfo / mult);
++
++        if(backup != 0 && backup != 0xffff &&
++           (backup % mult) == 0)
++            kenwood_bpb_put_le16(&b[50], backup / mult);
++    }
++#else
++    (void)data;
++    (void)size;
++#endif
++}
++
+ static void send_and_read_next(void)
+ {
++    unsigned int send_size =
++        MIN(READ_BUFFER_SIZE,cur_cmd.count*cur_cmd.block_size);
++
+     int result = USBSTOR_READ_SECTORS_FILTER();
+ 
+     if(result != 0 && cur_cmd.last_result == 0)
+         cur_cmd.last_result = result;
+ 
+-    send_block_data(cur_cmd.data[cur_cmd.data_select],
+-                    MIN(READ_BUFFER_SIZE,cur_cmd.count*cur_cmd.block_size));
++    kenwood_patch_mbr_for_512(cur_cmd.data[cur_cmd.data_select], send_size);
++    kenwood_patch_fat32_bpb_for_512(cur_cmd.data[cur_cmd.data_select], send_size);
++
++    /*
++     * Capture the translated primary FAT32 boot sector before any session
++     * shadow is applied.  The observed Kenwood write targets LBA 257040.
++     */
++    if(!kenwood_reference_valid &&
++       cur_cmd.block_size == 512 &&
++       257040 >= cur_cmd.sector) {
++        sector_t reference_offset = 257040 - cur_cmd.sector;
++        unsigned int byte_offset =
++            reference_offset * cur_cmd.block_size;
++
++        if(byte_offset + 512 <= send_size) {
++            memcpy(kenwood_reference_sector,
++                   cur_cmd.data[cur_cmd.data_select] + byte_offset, 512);
++            kenwood_reference_lba = 257040;
++            kenwood_reference_valid = true;
++        }
++    }
++
++    /*
++     * Overlay the Kenwood's session-only write after translation.
++     * cur_cmd.sector is the first host-visible 512-byte LBA in this buffer.
++     */
++    if(kenwood_shadow_valid &&
++       cur_cmd.block_size == 512 &&
++       kenwood_shadow_lba >= cur_cmd.sector) {
++        sector_t shadow_offset = kenwood_shadow_lba - cur_cmd.sector;
++        unsigned int byte_offset = shadow_offset * cur_cmd.block_size;
++
++        if(byte_offset + 512 <= send_size)
++            memcpy(cur_cmd.data[cur_cmd.data_select] + byte_offset,
++                   kenwood_shadow_sector, 512);
++    }
++
++    /*
++     * Capture the exact FAT32 FSInfo sector presented to the host.
++     * Native FSInfo sector 1 becomes host sector +4 in the synthetic
++     * 512-byte view: 257040 + 4 = 257044.
++     *
++     * Do this after translation/shadow processing so these values match
++     * the actual bytes about to be sent to the Kenwood.
++     */
++    if(usb_storage_debug.read_10_count == 232 &&
++       cur_cmd.block_size == 512 &&
++       257044 >= cur_cmd.sector) {
++        sector_t fsinfo_offset = 257044 - cur_cmd.sector;
++        unsigned int byte_offset =
++            fsinfo_offset * cur_cmd.block_size;
++
++        if(byte_offset + 512 <= send_size) {
++            unsigned char *f =
++                cur_cmd.data[cur_cmd.data_select] + byte_offset;
++
++            usb_storage_debug.fsinfo_capture_count++;
++            usb_storage_debug.fsinfo_lead_sig =
++                kenwood_mbr_get_le32(&f[0]);
++            usb_storage_debug.fsinfo_struct_sig =
++                kenwood_mbr_get_le32(&f[484]);
++            usb_storage_debug.fsinfo_free_count =
++                kenwood_mbr_get_le32(&f[488]);
++            usb_storage_debug.fsinfo_next_free =
++                kenwood_mbr_get_le32(&f[492]);
++            usb_storage_debug.fsinfo_trail_sig =
++                kenwood_mbr_get_le32(&f[508]);
++        }
++    }
++
++    /*
++     * Diagnostic fingerprint for READ10 commands 225 through 240.
++     * Update after all Kenwood translation/shadow changes so this hashes
++     * the exact bytes presented to the USB host.
++     */
++    if(usb_storage_debug.read_10_count >= 225 &&
++       usb_storage_debug.read_10_count <= 240) {
++        unsigned int ri = usb_storage_debug.read_10_count - 225;
++        unsigned int h = usb_storage_debug.read_window_hash[ri];
++        unsigned int i;
++
++        for(i = 0; i < send_size; i++) {
++            h ^= cur_cmd.data[cur_cmd.data_select][i];
++            h *= 16777619u;
++        }
++
++        usb_storage_debug.read_window_hash[ri] = h;
++    }
++
++    send_block_data(cur_cmd.data[cur_cmd.data_select], send_size);
+ 
+     /* Switch buffers for the next one */
+     cur_cmd.data_select=!cur_cmd.data_select;
+@@ -759,6 +1487,15 @@ static void send_and_read_next(void)
+                 cur_cmd.sector,
+                 MIN(READ_BUFFER_SIZE/cur_cmd.block_size, cur_cmd.count),
+                 cur_cmd.data[cur_cmd.data_select]);
++
++        if(result != 0) {
++            usb_storage_debug.storage_read_error_count++;
++            usb_storage_debug.last_storage_error_lba = cur_cmd.sector;
++            usb_storage_debug.last_storage_error_blocks =
++                MIN(READ_BUFFER_SIZE/cur_cmd.block_size, cur_cmd.count);
++            usb_storage_debug.last_storage_error_result = result;
++        }
++
+         if(cur_cmd.last_result == 0)
+             cur_cmd.last_result = result;
+ 
+@@ -777,11 +1514,15 @@ static void handle_scsi(struct command_block_wrapper* cbw)
+     unsigned char lun = cbw->lun;
+ 
+     if(letoh32(cbw->signature) != CBW_SIGNATURE) {
++        usb_storage_debug.cbw_signature_bad_count++;
+         logf("ums: bad cbw signature (%x)", cbw->signature);
+         usb_drv_stall(EP_IN, true,true);
+         usb_drv_stall(EP_OUT, true,false);
+         return;
+     }
++
++    usb_storage_debug.cbw_signature_good_count++;
++
+     /* Clear the signature to prevent possible bugs elsewhere
+      * to trigger a second execution of the same command with
+      * bogus data */
+@@ -792,6 +1533,13 @@ static void handle_scsi(struct command_block_wrapper* cbw)
+ #endif
+ 
+     storage_get_info(lun,&info);
++    usb_storage_debug.storage_sector_size = info.sector_size;
++#ifdef MAX_VIRT_SECTOR_SIZE
++    usb_storage_debug.sector_multiplier =
++        disk_get_sector_multiplier(IF_MD(lun));
++#else
++    usb_storage_debug.sector_multiplier = 1;
++#endif
+ #ifdef USB_USE_RAMDISK
+     block_size = SECTOR_SIZE;
+     block_count = RAMDISK_SIZE;
+@@ -811,9 +1559,16 @@ static void handle_scsi(struct command_block_wrapper* cbw)
+ 
+     unsigned int block_size_mult = 1; /* Number of LOGICAL storage device blocks in each USB block */
+ #ifdef MAX_VIRT_SECTOR_SIZE
+-    block_size_mult = disk_get_sector_multiplier(IF_MD(lun));
++    /*
++     * Kenwood MSC compatibility:
++     * Keep Rockbox's disk virtual-sector mapping for local filesystem use,
++     * but expose the underlying logical sector geometry directly over USB.
++     */
++    block_size_mult = 1;
+ #endif
+ 
++    usb_storage_host_block_multiplier = block_size_mult;
++
+     uint32_t bsize = block_size*block_size_mult;
+     sector_t bcount = block_count/block_size_mult;
+ 
+@@ -821,20 +1576,180 @@ static void handle_scsi(struct command_block_wrapper* cbw)
+     cur_cmd.lun = lun;
+     cur_cmd.cur_cmd = cbw->command_block[0];
+ 
++    usb_storage_debug.cbw_count++;
++    usb_storage_debug.last_opcode = cbw->command_block[0];
++
++    /*
++     * Start a fresh microsecond timing capture at the recurring
++     * R236 = READ(10) 734042/30 decision-point command.
++     */
++    if(cbw->command_block[0] == SCSI_READ_10 &&
++       usb_storage_debug.read_10_count == 235) {
++        unsigned int timing_lba =
++            ((unsigned int)cbw->command_block[2] << 24) |
++            ((unsigned int)cbw->command_block[3] << 16) |
++            ((unsigned int)cbw->command_block[4] << 8) |
++            (unsigned int)cbw->command_block[5];
++
++        unsigned int timing_blocks =
++            ((unsigned int)cbw->command_block[7] << 8) |
++            (unsigned int)cbw->command_block[8];
++
++        if(timing_lba == 734042 && timing_blocks == 30) {
++            usb_storage_debug.timing_active = 1;
++            usb_storage_debug.timing_mask = 0;
++            usb_storage_debug.timing_t0 = USEC_TIMER;
++            usb_storage_debug.timing_pending_csw = 0;
++
++            usb_storage_debug.timing_r236_data_done = 0;
++            usb_storage_debug.timing_r236_csw_issue = 0;
++            usb_storage_debug.timing_r236_csw_done = 0;
++
++            usb_storage_debug.timing_write_cbw = 0;
++            usb_storage_debug.timing_write_data_done = 0;
++            usb_storage_debug.timing_write_csw_issue = 0;
++            usb_storage_debug.timing_write_csw_done = 0;
++
++            usb_storage_debug.timing_next_cbw = 0;
++            usb_storage_debug.timing_next_opcode = 0;
++        }
++    }
++
++    /*
++     * If the Kenwood's WRITE(10) CBW is being executed now and its
++     * arrival wasn't already captured by the CSW/CBW race path,
++     * timestamp it here.
++     */
++    if(usb_storage_debug.timing_active &&
++       cbw->command_block[0] == SCSI_WRITE_10 &&
++       !(usb_storage_debug.timing_mask & 0x08)) {
++        unsigned int timing_lba =
++            ((unsigned int)cbw->command_block[2] << 24) |
++            ((unsigned int)cbw->command_block[3] << 16) |
++            ((unsigned int)cbw->command_block[4] << 8) |
++            (unsigned int)cbw->command_block[5];
++
++        unsigned int timing_blocks =
++            ((unsigned int)cbw->command_block[7] << 8) |
++            (unsigned int)cbw->command_block[8];
++
++        if(timing_lba == 257040 && timing_blocks == 1) {
++            usb_storage_debug.timing_write_cbw =
++                USEC_TIMER - usb_storage_debug.timing_t0;
++            usb_storage_debug.timing_mask |= 0x08;
++        }
++    }
++
++    /*
++     * Kenwood protocol trace.
++     *
++     * Start at READ(10) #225 so we can compare timing leading into the
++     * R236 decision point. At this dispatcher point the READ counter has
++     * not yet been incremented, so 224 means this command becomes R225.
++     *
++     * Starting a fresh trace also overwrites any sticky trace left from
++     * a prior logical MSC connection.
++     */
++    if(cbw->command_block[0] == SCSI_READ_10 &&
++       usb_storage_debug.read_10_count == 224) {
++        usb_storage_debug.scsi_trace_active = 1;
++        usb_storage_debug.scsi_trace_count = 0;
++        usb_storage_debug.scsi_trace_t0 = USEC_TIMER;
++
++        memset(usb_storage_debug.scsi_trace_opcode, 0,
++               sizeof(usb_storage_debug.scsi_trace_opcode));
++        memset(usb_storage_debug.scsi_trace_lba, 0,
++               sizeof(usb_storage_debug.scsi_trace_lba));
++        memset(usb_storage_debug.scsi_trace_blocks, 0,
++               sizeof(usb_storage_debug.scsi_trace_blocks));
++        memset(usb_storage_debug.scsi_trace_time, 0,
++               sizeof(usb_storage_debug.scsi_trace_time));
++
++        memset(usb_storage_debug.scsi_trace_cdb1, 0,
++               sizeof(usb_storage_debug.scsi_trace_cdb1));
++        memset(usb_storage_debug.scsi_trace_cdb4, 0,
++               sizeof(usb_storage_debug.scsi_trace_cdb4));
++        memset(usb_storage_debug.scsi_trace_tag, 0,
++               sizeof(usb_storage_debug.scsi_trace_tag));
++        memset(usb_storage_debug.scsi_trace_csw_status, 0xff,
++               sizeof(usb_storage_debug.scsi_trace_csw_status));
++        memset(usb_storage_debug.scsi_trace_csw_issue, 0,
++               sizeof(usb_storage_debug.scsi_trace_csw_issue));
++        memset(usb_storage_debug.scsi_trace_csw_done, 0,
++               sizeof(usb_storage_debug.scsi_trace_csw_done));
++
++        usb_storage_debug.scsi_trace_current = 0xffffffffu;
++    }
++
++    if(usb_storage_debug.scsi_trace_active &&
++       usb_storage_debug.scsi_trace_count < 24) {
++        unsigned int ti = usb_storage_debug.scsi_trace_count++;
++
++        usb_storage_debug.scsi_trace_time[ti] =
++            USEC_TIMER - usb_storage_debug.scsi_trace_t0;
++
++        usb_storage_debug.scsi_trace_opcode[ti] =
++            cbw->command_block[0];
++
++        usb_storage_debug.scsi_trace_cdb1[ti] =
++            cbw->command_block[1];
++        usb_storage_debug.scsi_trace_cdb4[ti] =
++            cbw->command_block[4];
++        usb_storage_debug.scsi_trace_tag[ti] =
++            letoh32(cbw->tag);
++
++        usb_storage_debug.scsi_trace_current = ti;
++
++        if(cbw->command_block[0] == SCSI_READ_10) {
++            usb_storage_debug.scsi_trace_lba[ti] =
++                ((unsigned int)cbw->command_block[2] << 24) |
++                ((unsigned int)cbw->command_block[3] << 16) |
++                ((unsigned int)cbw->command_block[4] << 8) |
++                (unsigned int)cbw->command_block[5];
++
++            usb_storage_debug.scsi_trace_blocks[ti] =
++                ((unsigned int)cbw->command_block[7] << 8) |
++                (unsigned int)cbw->command_block[8];
++        } else {
++            usb_storage_debug.scsi_trace_lba[ti] = 0;
++            usb_storage_debug.scsi_trace_blocks[ti] = 0;
++        }
++
++        if(usb_storage_debug.scsi_trace_count >= 24)
++            usb_storage_debug.scsi_trace_active = 0;
++    }
++    else {
++        usb_storage_debug.scsi_trace_current = 0xffffffffu;
++    }
++
+     switch (cbw->command_block[0]) {
+         case SCSI_TEST_UNIT_READY:
++            usb_storage_debug.test_unit_ready_count++;
+             logf("scsi test_unit_ready %d",lun);
++
+             if(!usb_exclusive_storage()) {
++                usb_storage_debug.test_unit_ready_exclusive_fail_count++;
++
++                /*
++                 * The LUN exists, but Rockbox has not completed the
++                 * asynchronous exclusive-storage handoff yet.
++                 * Report "logical unit is becoming ready" instead of
++                 * pretending that no medium is present.
++                 */
+                 send_csw(UMS_STATUS_FAIL);
+                 cur_sense_data.sense_key=SENSE_NOT_READY;
+-                cur_sense_data.asc=ASC_MEDIUM_NOT_PRESENT;
+-                cur_sense_data.ascq=0;
++                cur_sense_data.asc=ASC_LOGICAL_UNIT_NOT_READY;
++                cur_sense_data.ascq=ASCQ_BECOMING_READY;
+                 break;
+             }
++
+             if(lun_present) {
++                usb_storage_debug.test_unit_ready_good_count++;
+                 send_csw(UMS_STATUS_GOOD);
+             }
+             else {
++                usb_storage_debug.test_unit_ready_lun_fail_count++;
++
+                 send_csw(UMS_STATUS_FAIL);
+                 cur_sense_data.sense_key=SENSE_NOT_READY;
+                 cur_sense_data.asc=ASC_MEDIUM_NOT_PRESENT;
+@@ -869,6 +1784,7 @@ static void handle_scsi(struct command_block_wrapper* cbw)
+         }
+ 
+         case SCSI_INQUIRY:
++            usb_storage_debug.inquiry_count++;
+             logf("scsi inquiry %d",lun);
+             fill_inquiry(IF_MD(lun));
+             length = MIN(length, cbw->command_block[4]);
+@@ -877,6 +1793,7 @@ static void handle_scsi(struct command_block_wrapper* cbw)
+             break;
+ 
+         case SCSI_REQUEST_SENSE: {
++            usb_storage_debug.request_sense_count++;
+             tb.sense_data->ResponseCode=0x70;/*current error*/
+             tb.sense_data->Obsolete=0;
+             tb.sense_data->fei_sensekey=cur_sense_data.sense_key&0x0f;
+@@ -895,6 +1812,7 @@ static void handle_scsi(struct command_block_wrapper* cbw)
+         }
+ 
+         case SCSI_MODE_SENSE_10: {
++            usb_storage_debug.mode_sense_10_count++;
+             if(!lun_present) {
+                 send_command_failed_result();
+                 cur_sense_data.sense_key=SENSE_NOT_READY;
+@@ -910,6 +1828,7 @@ static void handle_scsi(struct command_block_wrapper* cbw)
+                     tb.ms_data_10->mode_data_length =
+                         htobe16(sizeof(struct mode_sense_data_10)-2);
+                     tb.ms_data_10->medium_type = 0;
++                    /* Advertise writable for Kenwood compatibility. */
+                     tb.ms_data_10->device_specific = 0;
+                     tb.ms_data_10->reserved = 0;
+                     tb.ms_data_10->longlba = 1;
+@@ -974,6 +1893,7 @@ static void handle_scsi(struct command_block_wrapper* cbw)
+                     tb.ms_data_6->mode_data_length =
+                         sizeof(struct mode_sense_data_6)-1;
+                     tb.ms_data_6->medium_type = 0;
++                    /* Advertise writable for Kenwood compatibility. */
+                     tb.ms_data_6->device_specific = 0;
+                     tb.ms_data_6->block_descriptor_length =
+                         sizeof(struct mode_sense_bdesc_shortlba);
+@@ -1066,6 +1986,7 @@ static void handle_scsi(struct command_block_wrapper* cbw)
+         }
+ 
+         case SCSI_READ_CAPACITY_10: {
++            usb_storage_debug.read_capacity_10_count++;
+             logf("scsi read_capacity10 %d",lun);
+ 
+             if(lun_present) {
+@@ -1150,6 +2071,31 @@ static void handle_scsi(struct command_block_wrapper* cbw)
+             break;
+         }
+         case SCSI_READ_10:
++            usb_storage_debug.read_10_count++;
++
++            usb_storage_debug.last_read_lba =
++                ((unsigned int)cbw->command_block[2] << 24) |
++                ((unsigned int)cbw->command_block[3] << 16) |
++                ((unsigned int)cbw->command_block[4] << 8) |
++                (unsigned int)cbw->command_block[5];
++
++            usb_storage_debug.last_read_blocks =
++                ((unsigned int)cbw->command_block[7] << 8) |
++                (unsigned int)cbw->command_block[8];
++
++            if(usb_storage_debug.read_10_count >= 225 &&
++               usb_storage_debug.read_10_count <= 240) {
++                unsigned int ri = usb_storage_debug.read_10_count - 225;
++
++                usb_storage_debug.read_window_lba[ri] =
++                    usb_storage_debug.last_read_lba;
++                usb_storage_debug.read_window_blocks[ri] =
++                    usb_storage_debug.last_read_blocks;
++
++                /* FNV-1a 32-bit offset basis. */
++                usb_storage_debug.read_window_hash[ri] = 2166136261u;
++            }
++
+             logf("scsi read10 %d",lun);
+             if(!lun_present) {
+                 send_command_failed_result();
+@@ -1189,6 +2135,15 @@ static void handle_scsi(struct command_block_wrapper* cbw)
+                         cur_cmd.sector,
+                         MIN(READ_BUFFER_SIZE/cur_cmd.block_size, cur_cmd.count),
+                         cur_cmd.data[cur_cmd.data_select]);
++
++                if(cur_cmd.last_result != 0) {
++                    usb_storage_debug.storage_read_error_count++;
++                    usb_storage_debug.last_storage_error_lba = cur_cmd.sector;
++                    usb_storage_debug.last_storage_error_blocks =
++                        MIN(READ_BUFFER_SIZE/cur_cmd.block_size, cur_cmd.count);
++                    usb_storage_debug.last_storage_error_result =
++                        cur_cmd.last_result;
++                }
+ #endif
+                 send_and_read_next();
+             }
+@@ -1240,12 +2195,22 @@ static void handle_scsi(struct command_block_wrapper* cbw)
+                         cur_cmd.sector,
+                         MIN(READ_BUFFER_SIZE/cur_cmd.block_size, cur_cmd.count),
+                         cur_cmd.data[cur_cmd.data_select]);
++
++                if(cur_cmd.last_result != 0) {
++                    usb_storage_debug.storage_read_error_count++;
++                    usb_storage_debug.last_storage_error_lba = cur_cmd.sector;
++                    usb_storage_debug.last_storage_error_blocks =
++                        MIN(READ_BUFFER_SIZE/cur_cmd.block_size, cur_cmd.count);
++                    usb_storage_debug.last_storage_error_result =
++                        cur_cmd.last_result;
++                }
+ #endif
+                 send_and_read_next();
+             }
+             break;
+ #endif
+         case SCSI_WRITE_10:
++            usb_storage_debug.write_10_count++;
+             logf("scsi write10 %d",lun);
+             if(!lun_present) {
+                 send_csw(UMS_STATUS_FAIL);
+@@ -1267,6 +2232,47 @@ static void handle_scsi(struct command_block_wrapper* cbw)
+                  cbw->command_block[8]);
+             cur_cmd.block_size = block_size;
+ 
++            /*
++             * Record the host-visible WRITE(10) request.
++             * block_size_mult is forced to 1 for the Kenwood MSC view,
++             * so these are the USB-side 512-byte LBA/count values.
++             */
++            usb_storage_debug.last_write_lba =
++                (cbw->command_block[2] << 24 |
++                 cbw->command_block[3] << 16 |
++                 cbw->command_block[4] << 8  |
++                 cbw->command_block[5]);
++
++            usb_storage_debug.last_write_blocks =
++                (cbw->command_block[7] << 8 |
++                 cbw->command_block[8]);
++
++            /*
++             * Observe the Kenwood's one-sector boot-sector WRITE(10).
++             * Diagnostic only: do not change command behavior.
++             */
++            if(usb_storage_debug.last_write_lba == 257040 &&
++               usb_storage_debug.last_write_blocks == 1) {
++                usb_storage_debug.write_diag_active = 1;
++
++                usb_storage_debug.write_diag_cbw_tag =
++                    letoh32(cbw->tag);
++                usb_storage_debug.write_diag_cbw_length =
++                    letoh32(cbw->data_transfer_length);
++
++                usb_storage_debug.write_diag_rx_length = 0;
++                usb_storage_debug.write_diag_rx_status = 0;
++
++                usb_storage_debug.write_diag_csw_tag = 0;
++                usb_storage_debug.write_diag_csw_status = 0;
++                usb_storage_debug.write_diag_csw_residue = 0;
++
++                usb_storage_debug.write_diag_race = 0;
++                usb_storage_debug.write_diag_next_opcode = 0;
++                usb_storage_debug.write_diag_next_tag = 0;
++                usb_storage_debug.write_diag_next_path = 0;
++            }
++
+             /* expect data */
+             if((cur_cmd.sector + cur_cmd.count) > block_count) {
+                 send_csw(UMS_STATUS_FAIL);
+@@ -1428,11 +2434,53 @@ static void receive_block_data(void *data,int size)
+ 
+ static void send_csw(int status)
+ {
++    if(status != UMS_STATUS_GOOD)
++        usb_storage_debug.error_count++;
+     tb.csw->signature = htole32(CSW_SIGNATURE);
+     tb.csw->tag = cur_cmd.tag;
+     tb.csw->data_residue = 0;
+     tb.csw->status = status;
+ 
++    if(usb_storage_debug.scsi_trace_current < 24) {
++        unsigned int ti = usb_storage_debug.scsi_trace_current;
++
++        usb_storage_debug.scsi_trace_csw_status[ti] = status;
++        usb_storage_debug.scsi_trace_csw_issue[ti] =
++            USEC_TIMER - usb_storage_debug.scsi_trace_t0;
++    }
++
++    if(usb_storage_debug.timing_active &&
++       cur_cmd.cur_cmd == SCSI_READ_10 &&
++       usb_storage_debug.last_read_lba == 734042 &&
++       usb_storage_debug.last_read_blocks == 30 &&
++       !(usb_storage_debug.timing_mask & 0x02)) {
++        usb_storage_debug.timing_r236_csw_issue =
++            USEC_TIMER - usb_storage_debug.timing_t0;
++        usb_storage_debug.timing_mask |= 0x02;
++        usb_storage_debug.timing_pending_csw = 1;
++    }
++
++    if(usb_storage_debug.timing_active &&
++       cur_cmd.cur_cmd == SCSI_WRITE_10 &&
++       cur_cmd.sector == 257040 &&
++       !(usb_storage_debug.timing_mask & 0x20)) {
++        usb_storage_debug.timing_write_csw_issue =
++            USEC_TIMER - usb_storage_debug.timing_t0;
++        usb_storage_debug.timing_mask |= 0x20;
++        usb_storage_debug.timing_pending_csw = 2;
++    }
++
++    if(usb_storage_debug.write_diag_active &&
++       cur_cmd.cur_cmd == SCSI_WRITE_10 &&
++       cur_cmd.sector == 257040) {
++        usb_storage_debug.write_diag_csw_tag =
++            letoh32(tb.csw->tag);
++        usb_storage_debug.write_diag_csw_status =
++            tb.csw->status;
++        usb_storage_debug.write_diag_csw_residue =
++            letoh32(tb.csw->data_residue);
++    }
++
+     usb_drv_send_nonblocking(EP_IN, tb.csw,
+             sizeof(struct command_status_wrapper));
+     state = WAITING_FOR_CSW_COMPLETION_OR_COMMAND;
+diff --git a/firmware/usbstack/usb_storage.h b/firmware/usbstack/usb_storage.h
+index 8dbe965882..27cb4fa2b6 100644
+--- a/firmware/usbstack/usb_storage.h
++++ b/firmware/usbstack/usb_storage.h
+@@ -36,5 +36,169 @@ bool usb_storage_control_request(struct usb_ctrlrequest* req, void* reqdata, uns
+ void usb_storage_notify_hotswap(int volume,bool inserted);
+ #endif
+ 
++struct usb_storage_debug_state
++{
++    unsigned int init_count;
++    unsigned int config_descriptor_count;
++    unsigned int connection_count;
++
++    unsigned int control_request_count;
++    unsigned int get_max_lun_count;
++    unsigned int bulk_reset_count;
++
++    unsigned int transfer_count;
++    unsigned int transfer_out_count;
++    unsigned int transfer_in_count;
++    unsigned int waiting_command_count;
++    int last_transfer_length;
++    int last_transfer_status;
++
++    unsigned int cbw_signature_good_count;
++    unsigned int cbw_signature_bad_count;
++
++    unsigned int cbw_count;
++    unsigned int last_opcode;
++
++    unsigned int inquiry_count;
++    unsigned int test_unit_ready_count;
++    unsigned int test_unit_ready_good_count;
++    unsigned int test_unit_ready_exclusive_fail_count;
++    unsigned int test_unit_ready_lun_fail_count;
++    unsigned int request_sense_count;
++    unsigned int read_capacity_10_count;
++    unsigned int mode_sense_10_count;
++    unsigned int read_10_count;
++    unsigned int write_10_count;
++
++    unsigned int error_count;
++    unsigned int storage_read_error_count;
++    unsigned int transfer_error_count;
++
++    unsigned int last_read_lba;
++    unsigned int last_read_blocks;
++    unsigned int last_storage_error_lba;
++    unsigned int last_storage_error_blocks;
++    int last_storage_error_result;
++    unsigned int last_write_lba;
++    unsigned int last_write_blocks;
++
++    /*
++     * Kenwood behavioral pacing experiment.
++     * Fires once on completion of the early READ(10) 0/8.
++     */
++    unsigned int kenwood_pace_count;
++    unsigned int kenwood_pace_delay_us;
++    unsigned int kenwood_pace_fired;
++
++    /*
++     * Raw ARC USB FRINDEX snapshots around the Kenwood pacing point.
++     * In HS mode, bits 2:0 are the USB microframe (0-7).
++     */
++    unsigned int kenwood_frindex_before;
++    unsigned int kenwood_frindex_after_delay;
++    unsigned int kenwood_frindex_after_csw;
++
++    unsigned int read_window_lba[16];
++    unsigned int read_window_blocks[16];
++    unsigned int read_window_hash[16];
++
++    /*
++     * Kenwood SCSI command trace.
++     * Capture up to 24 CBWs beginning with READ(10) #230.
++     */
++    unsigned int scsi_trace_active;
++    unsigned int scsi_trace_count;
++    unsigned int scsi_trace_opcode[24];
++    unsigned int scsi_trace_lba[24];
++    unsigned int scsi_trace_blocks[24];
++    unsigned int scsi_trace_time[24];
++
++    unsigned int scsi_trace_cdb1[24];
++    unsigned int scsi_trace_cdb4[24];
++    unsigned int scsi_trace_tag[24];
++    unsigned int scsi_trace_csw_status[24];
++    unsigned int scsi_trace_csw_issue[24];
++    unsigned int scsi_trace_csw_done[24];
++
++    /*
++     * Index of the trace command currently being completed.
++     * 0xffffffff means the current command is not represented in trace.
++     */
++    unsigned int scsi_trace_current;
++
++    unsigned int scsi_trace_t0;
++
++    /*
++     * Kenwood WRITE(10) / Bulk-Only Transport diagnostic.
++     * Observes the one-sector host write to LBA 257040.
++     */
++    unsigned int write_diag_active;
++    unsigned int write_diag_cbw_tag;
++    unsigned int write_diag_cbw_length;
++
++    unsigned int write_diag_rx_length;
++    int write_diag_rx_status;
++
++    unsigned int write_diag_csw_tag;
++    unsigned int write_diag_csw_status;
++    unsigned int write_diag_csw_residue;
++
++    /*
++     * Which side of the BOT race completed first:
++     * 1 = CSW IN completed first
++     * 2 = next CBW OUT arrived first
++     */
++    unsigned int write_diag_race;
++
++    /*
++     * First command following the WRITE(10).
++     * next_path:
++     * 1 = executed from WAITING_FOR_COMMAND
++     * 2 = executed from WAITING_FOR_CSW_COMPLETION
++     */
++    unsigned int write_diag_next_opcode;
++    unsigned int write_diag_next_tag;
++    unsigned int write_diag_next_path;
++
++    /*
++     * Kenwood R236 -> WRITE10 -> next-command timing diagnostic.
++     * All event times are microseconds relative to R236 CBW arrival.
++     * Sticky across logical MSC reconnects; a new R236 overwrites it.
++     */
++    unsigned int timing_active;
++    unsigned int timing_mask;
++    unsigned int timing_t0;
++    unsigned int timing_pending_csw;
++
++    unsigned int timing_r236_data_done;
++    unsigned int timing_r236_csw_issue;
++    unsigned int timing_r236_csw_done;
++
++    unsigned int timing_write_cbw;
++    unsigned int timing_write_data_done;
++    unsigned int timing_write_csw_issue;
++    unsigned int timing_write_csw_done;
++
++    unsigned int timing_next_cbw;
++    unsigned int timing_next_opcode;
++
++    unsigned int fsinfo_capture_count;
++    unsigned int fsinfo_lead_sig;
++    unsigned int fsinfo_struct_sig;
++    unsigned int fsinfo_free_count;
++    unsigned int fsinfo_next_free;
++    unsigned int fsinfo_trail_sig;
++
++    unsigned int bpb_diff_count;
++    unsigned int bpb_diff_offset[4];
++    unsigned int bpb_diff_before[4];
++    unsigned int bpb_diff_after[4];
++
++    unsigned int storage_sector_size;
++    unsigned int sector_multiplier;
++};
++
++const struct usb_storage_debug_state *usb_storage_get_debug_state(void);
++
+ #endif
+ 
